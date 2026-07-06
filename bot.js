@@ -7,7 +7,9 @@ const ai = new GoogleGenAI({
 });
 
 // OAuth client setup
-const credentials = require("./credentials.json").installed;
+// OAuth client setup (Railway)
+const credentials = JSON.parse(process.env.GOOGLE_CREDENTIALS).installed;
+const token = JSON.parse(process.env.GOOGLE_TOKEN);
 
 const auth = new google.auth.OAuth2(
   credentials.client_id,
@@ -15,8 +17,12 @@ const auth = new google.auth.OAuth2(
   credentials.redirect_uris[0]
 );
 
-auth.setCredentials(require("./token.json"));
-const gmail = google.gmail({ version: "v1", auth });
+auth.setCredentials(token);
+
+const gmail = google.gmail({
+  version: "v1",
+  auth,
+});
 
 // Safely decode base64 email bodies
 function decodeBase64(data = "") {
@@ -115,9 +121,9 @@ async function generateReply(emailText) {
   const response = await ai.models.generateContent({
     model: "gemini-2.5-flash",
     contents: `
-You are a professional assistant writing a response on behalf of B.Jeevitesh. 
+You are a professional assistant writing a response on behalf of B.Jeevitesh.
 
-Review the following email and draft a short, polite, and helpful response. 
+Review the following email and draft a short, polite, and helpful response.
 Sign off the email formally as:
 Best regards,
 B.Jeevitesh
@@ -137,7 +143,7 @@ async function runBot() {
   setInterval(async () => {
     try {
       const emails = await getUnreadEmails();
-      
+
       if (emails.length === 0) {
         console.log("No new unread emails.");
         return;
@@ -207,4 +213,3 @@ catch (err) {
 }, 60000);}
 
 runBot();
-
