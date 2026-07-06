@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Email Automation</title>
+</head>
+<body>
+  <h2>Send Email</h2>
+
+  <input id="to" placeholder="Receiver Email"><br><br>
+
+  <input id="subject" placeholder="Subject"><br><br>
+
+  <textarea id="message" placeholder="Message"></textarea><br><br>
+
+  <button onclick="sendMail()">Send Email</button>
+
+  <script>
+    async function sendMail() {
+      const res = await fetch("/send-email", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          to: document.getElementById("to").value,
+          subject: document.getElementById("subject").value,
+          message: document.getElementById("message").value
+        })
+      });
+
+      const data = await res.json();
+      alert(data.message || data.error);
+    }
+  </script>
+</body>
+</html>
