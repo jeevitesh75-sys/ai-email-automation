@@ -1,15 +1,14 @@
 require("dotenv").config();
 const { google } = require("googleapis");
-const { GoogleGenAI } = require("@google/genai");
+const { Groq } = require("groq-sdk"); // Switched to Groq
 
-const ai = new GoogleGenAI({
-  apiKey: process.env.GEMINI_API_KEY,
+// Initialize Groq client
+const groq = new Groq({
+  apiKey: process.env.GROQ_API_KEY,
 });
 
-// OAuth client setup
-// OAuth client setup (Railway)
-const credentials = JSON.parse(process.env.GOOGLE_CREDENTIALS).installed;
-const token = JSON.parse(process.env.GOOGLE_TOKEN);
+// Load client credentials to fix the "Could not determine client ID" error
+const credentials = require("./credentials.json").web || require("./credentials.json").installed;
 
 const auth = new google.auth.OAuth2(
   credentials.client_id,
@@ -17,12 +16,12 @@ const auth = new google.auth.OAuth2(
   credentials.redirect_uris[0]
 );
 
-auth.setCredentials(token);
+auth.setCredentials(require("./token.json"));
 
-const gmail = google.gmail({
-  version: "v1",
-  auth,
-});
+const gmail = google.gmail({ version: "v1", auth });
+
+// Global variable to hold your own email address
+let myEmailAddress = "";
 
 // Safely decode base64 email bodies
 function decodeBase64(data = "") {
@@ -37,14 +36,25 @@ function decodeBase64(data = "") {
 function extractEmail(str) {
   if (!str) return "";
   const match = str.match(/<(.+?)>/);
-  return match ? match[1] : str;
+  return match ? match[1].toLowerCase().trim() : str.toLowerCase().trim();
+}
+
+// Get the authenticated user's profile email address
+async function getMyProfileEmail() {
+  try {
+    const profile = await gmail.users.getProfile({ userId: "me" });
+    myEmailAddress = profile.data.emailAddress.toLowerCase().trim();
+    console.log(`👤 Operating as account: ${myEmailAddress}`);
+  } catch (err) {
+    console.error("❌ Failed to fetch profile email:", err.message);
+  }
 }
 
 // Fetch only UNREAD emails
 async function getUnreadEmails() {
   const res = await gmail.users.messages.list({
     userId: "me",
-    q: "is:unread", // Crucial: Only grab emails that need attention
+    q: "is:unread",
     maxResults: 5,
   });
 
@@ -71,7 +81,6 @@ async function readEmail(id) {
 
   let body = "";
   if (payload.parts && payload.parts.length) {
-    // Look for plain text component
     const part = payload.parts.find(p => p.mimeType === "text/plain");
     body = decodeBase64(part?.body?.data || "");
   } else {
@@ -116,36 +125,41 @@ async function markAsRead(id) {
   });
 }
 
-// Generate an intelligent, contextual response
+// Generate response using Groq Cloud API
 async function generateReply(emailText) {
-  const response = await ai.models.generateContent({
-    model: "gemini-2.5-flash",
-    contents: `
-You are a professional assistant writing a response on behalf of B.Jeevitesh.
-
-Review the following email and draft a short, polite, and helpful response.
+  const chatCompletion = await groq.chat.completions.create({
+    messages: [
+      {
+        role: "system",
+        content: `You are a professional assistant writing a response on behalf of B.Jeevitesh. 
+Review the incoming email and draft a short, polite, and helpful response. 
 Sign off the email formally as:
 Best regards,
-B.Jeevitesh
-
-Email received:
-"${emailText}"
-`,
+B.Jeevitesh`
+      },
+      {
+        role: "user",
+        content: `Email received:\n"${emailText}"`
+      }
+    ],
+    model: "llama-3.3-70b-specdec", // High-quality, fast Llama 3 model on Groq
   });
 
-  return response.text;
+  return chatCompletion.choices[0].message.content;
 }
 
 // Main execution loop
 async function runBot() {
-  console.log("🤖 Professional AI Email Bot Active & Monitoring...");
+  // First, fetch your own email address to enable the self-reply filter
+  await getMyProfileEmail();
+
+  console.log("🤖 Professional Groq AI Email Bot Active & Monitoring...");
 
   setInterval(async () => {
     try {
       const emails = await getUnreadEmails();
-
+      
       if (emails.length === 0) {
-        console.log("No new unread emails.");
         return;
       }
 
@@ -153,63 +167,36 @@ async function runBot() {
         const full = await readEmail(mail.id);
         const sender = extractEmail(full.from);
 
-if (
-  sender.toLowerCase() === process.env.EMAIL_USER.toLowerCase()
-) {
-  await markAsRead(mail.id);
-  continue;
-}
         if (!full.body || !sender) {
-          await markAsRead(mail.id); // Clear it anyway so it doesn't stall the queue
+          await markAsRead(mail.id);
           continue;
         }
 
-console.log(`Processing email from: ${sender}`);
+        // Anti-Loop Filter: Skip if you sent this email to yourself
+        if (sender === myEmailAddress) {
+          console.log(`⏭️ Skipped self-sent email from: ${sender}`);
+          await markAsRead(mail.id);
+          continue;
+        }
 
-// 1. Generate the AI response
-let reply;
+        console.log(`Processing email from: ${sender}`);
 
-try {
-  reply = await generateReply(full.body);
-} catch (e) {
-  if (e.status === 429) {
-    console.log("⚠️ Gemini quota exceeded. Using fallback reply.");
+        // 1. Generate response via Groq
+        const reply = await generateReply(full.body);
 
-    reply = `Thank you for your email. I have received your message and will get back to you as soon as possible.
+        // 2. Send the reply
+        await sendReply(sender, full.subject, reply);
+        console.log(`✅ Replied to: ${sender}`);
 
-Best regards,
-B.Jeevitesh`;
-  } else {
-    throw e;
-  }
-}
-
-// 2. Send the reply
-await sendReply(sender, full.subject, reply);
-console.log(`✅ Replied to: ${sender}`);
-
-// 3. Mark as read
-await markAsRead(mail.id);      }
-
+        // 3. Mark as read
+        await markAsRead(mail.id);
+      }
+    } catch (err) {
+      console.error("❌ FULL ERROR:");
+      console.error(err);
     }
-catch (err) {
-  console.error("❌ FULL ERROR:");
-  console.error(err);
-
-  console.error("Message:", err.message);
-  console.error("Stack:", err.stack);
-
-  if (err.response) {
-    console.error("Response:");
-    console.error(err.response.data);
-  }
-
-  if (err.cause) {
-    console.error("Cause:");
-    console.error(err.cause);
-  }
+  }, 60000); // 60-second polling interval
 }
-
-}, 60000);}
 
 runBot();
+
