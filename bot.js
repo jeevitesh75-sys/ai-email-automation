@@ -1,27 +1,38 @@
 require("dotenv").config();
 const { google } = require("googleapis");
-const { Groq } = require("groq-sdk"); // Switched to Groq
+const { Groq } = require("groq-sdk");
 
 // Initialize Groq client
 const groq = new Groq({
   apiKey: process.env.GROQ_API_KEY,
 });
 
-// Load client credentials to fix the "Could not determine client ID" error
-const credentials = require("./credentials.json").web || require("./credentials.json").installed;
-
-const auth = new google.auth.OAuth2(
-  credentials.client_id,
-  credentials.client_secret,
-  credentials.redirect_uris[0]
-);
-
-auth.setCredentials(require("./token.json"));
-
-const gmail = google.gmail({ version: "v1", auth });
-
-// Global variable to hold your own email address
+let gmail;
 let myEmailAddress = "";
+
+try {
+  // Parse JSON data directly from environment variables for production environments
+  if (!process.env.GMAIL_CREDENTIALS || !process.env.GMAIL_TOKEN) {
+    throw new Error("Missing GMAIL_CREDENTIALS or GMAIL_TOKEN environment variables.");
+  }
+
+  const parsedCreds = JSON.parse(process.env.GMAIL_CREDENTIALS);
+  const credentials = parsedCreds.web || parsedCreds.installed;
+  const token = JSON.parse(process.env.GMAIL_TOKEN);
+
+  const auth = new google.auth.OAuth2(
+    credentials.client_id,
+    credentials.client_secret,
+    credentials.redirect_uris ? credentials.redirect_uris[0] : "http://localhost"
+  );
+
+  auth.setCredentials(token);
+  gmail = google.gmail({ version: "v1", auth });
+  
+} catch (err) {
+  console.error("❌ Initialization Error (Check Railway Environment Variables):", err.message);
+  process.exit(1); // Force exit if authentication blocks aren't available
+}
 
 // Safely decode base64 email bodies
 function decodeBase64(data = "") {
@@ -142,7 +153,7 @@ B.Jeevitesh`
         content: `Email received:\n"${emailText}"`
       }
     ],
-    model: "llama-3.3-70b-specdec", // High-quality, fast Llama 3 model on Groq
+    model: "llama-3.3-70b-specdec",
   });
 
   return chatCompletion.choices[0].message.content;
@@ -150,7 +161,7 @@ B.Jeevitesh`
 
 // Main execution loop
 async function runBot() {
-  // First, fetch your own email address to enable the self-reply filter
+  // Dynamic email verification to drop out self-emails
   await getMyProfileEmail();
 
   console.log("🤖 Professional Groq AI Email Bot Active & Monitoring...");
@@ -174,7 +185,7 @@ async function runBot() {
 
         // Anti-Loop Filter: Skip if you sent this email to yourself
         if (sender === myEmailAddress) {
-          console.log(`⏭️ Skipped self-sent email from: ${sender}`);
+          console.log(`\u23ed\ufe0f Skipped self-sent email from: ${sender}`);
           await markAsRead(mail.id);
           continue;
         }
@@ -192,8 +203,7 @@ async function runBot() {
         await markAsRead(mail.id);
       }
     } catch (err) {
-      console.error("❌ FULL ERROR:");
-      console.error(err);
+      console.error("❌ Operational Loop Error:", err.message);
     }
   }, 60000); // 60-second polling interval
 }
