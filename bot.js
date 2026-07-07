@@ -4,27 +4,30 @@ const { Groq } = require("groq-sdk");
 
 // Initialize Groq client
 const groq = new Groq({
-  apiKey: process.env.GROQ_API_KEY,
+  apiKey: process.env.GROQ_API_KEY || "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",
 });
 
 let gmail;
 let myEmailAddress = "";
 
-// DIAGNOSTIC CHECK: Logs exactly what the environment sees at runtime
-console.log("🔍 === RAILWAY RUNTIME ENVIRONMENT CHECK ===");
-console.log("GMAIL_CREDENTIALS detected?", !!process.env.GMAIL_CREDENTIALS);
-console.log("GMAIL_TOKEN detected?", !!process.env.GMAIL_TOKEN);
-console.log("GROQ_API_KEY detected?", !!process.env.GROQ_API_KEY);
-console.log("============================================");
+// ==================== HARDCODED FALLBACK STRINGS ====================
+// PASTE YOUR BASE64 STRINGS GENERATED FROM TERMUX INSIDE THE QUOTES BELOW:
+const HARDCODED_CREDENTIALS = "PASTE_YOUR_LONG_CREDENTIALS_BASE64_STRING_HERE";
+const HARDCODED_TOKEN = "PASTE_YOUR_LONG_TOKEN_BASE64_STRING_HERE";
+// ====================================================================
 
 try {
-  if (!process.env.GMAIL_CREDENTIALS || !process.env.GMAIL_TOKEN) {
-    throw new Error(`Missing vars. Status -> CREDENTIALS: ${!!process.env.GMAIL_CREDENTIALS}, TOKEN: ${!!process.env.GMAIL_TOKEN}`);
+  // Use dashboard variables if available, otherwise drop back to hardcoded strings
+  const credsSource = process.env.GMAIL_CREDENTIALS || HARDCODED_CREDENTIALS;
+  const tokenSource = process.env.GMAIL_TOKEN || HARDCODED_TOKEN;
+
+  if (credsSource.includes("PASTE_YOUR") || tokenSource.includes("PASTE_YOUR")) {
+    throw new Error("You forgot to paste your real Base64 strings inside the bot.js file.");
   }
 
   // Safely decode the Base64 strings back into raw JSON text
-  const decodedCreds = Buffer.from(process.env.GMAIL_CREDENTIALS, "base64").toString("utf-8");
-  const decodedToken = Buffer.from(process.env.GMAIL_TOKEN, "base64").toString("utf-8");
+  const decodedCreds = Buffer.from(credsSource, "base64").toString("utf-8");
+  const decodedToken = Buffer.from(tokenSource, "base64").toString("utf-8");
 
   const parsedCreds = JSON.parse(decodedCreds);
   const credentials = parsedCreds.web || parsedCreds.installed;
@@ -198,9 +201,8 @@ async function runBot() {
           continue;
         }
 
-        // Anti-Spam / Anti-Loop Self Check
         if (sender === myEmailAddress) {
-          console.log(`\u23ed\ufe0f Skipped self-sent email from: ${sender}`);
+          console.log(`⏭️ Skipped self-sent email from: ${sender}`);
           await markAsRead(mail.id);
           continue;
         }
@@ -212,13 +214,13 @@ async function runBot() {
 
         // 2. Dispatch response mail
         await sendReply(sender, full.subject, reply);
-        console.log(`\u2705 Replied to: ${sender}`);
+        console.log(`✅ Replied to: ${sender}`);
 
         // 3. Flag completed
         await markAsRead(mail.id);
       }
     } catch (err) {
-      console.error("\u274c Operational Loop Error:", err.message);
+      console.error("❌ Operational Loop Error:", err.message);
     }
   }, 60000); 
 }
