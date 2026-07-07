@@ -11,12 +11,11 @@ let gmail;
 let myEmailAddress = "";
 
 try {
-  // Validate presence of environment variables
   if (!process.env.GMAIL_CREDENTIALS || !process.env.GMAIL_TOKEN) {
     throw new Error("Missing GMAIL_CREDENTIALS or GMAIL_TOKEN environment variables.");
   }
 
-  // Decode the safe Base64 strings back into raw JSON text
+  // Safely decode the Base64 strings back into raw JSON text
   const decodedCreds = Buffer.from(process.env.GMAIL_CREDENTIALS, "base64").toString("utf-8");
   const decodedToken = Buffer.from(process.env.GMAIL_TOKEN, "base64").toString("utf-8");
 
@@ -24,7 +23,6 @@ try {
   const credentials = parsedCreds.web || parsedCreds.installed;
   const token = JSON.parse(decodedToken);
 
-  // Set up Google OAuth2 Client
   const auth = new google.auth.OAuth2(
     credentials.client_id,
     credentials.client_secret,
@@ -55,7 +53,7 @@ function extractEmail(str) {
   return match ? match[1].toLowerCase().trim() : str.toLowerCase().trim();
 }
 
-// Automatically fetch your profile's email address to catch self-loops
+// Fetch profile's email address
 async function getMyProfileEmail() {
   try {
     const profile = await gmail.users.getProfile({ userId: "me" });
@@ -130,7 +128,7 @@ async function sendReply(to, subject, message) {
   });
 }
 
-// Remove the unread flag so the tracking loop skips it next cycle
+// Remove the unread flag
 async function markAsRead(id) {
   await gmail.users.messages.batchModify({
     userId: "me",
@@ -141,32 +139,38 @@ async function markAsRead(id) {
   });
 }
 
-// Query Groq Cloud for the response generation using Llama 3
+// Query Groq safely with built-in try-catch fallback to stop application crashes
 async function generateReply(emailText) {
-  const chatCompletion = await groq.chat.completions.create({
-    messages: [
-      {
-        role: "system",
-        content: `You are a professional assistant writing a response on behalf of B.Jeevitesh. 
-Review the incoming email and draft a short, polite, and helpful response. 
-Sign off the email formally as:
-Best regards,
-B.Jeevitesh`
-      },
-      {
-        role: "user",
-        content: `Email received:\n"${emailText}"`
-      }
-    ],
-    model: "llama-3.3-70b-specdec",
-  });
+  try {
+    const chatCompletion = await groq.chat.completions.create({
+      model: "llama-3.3-70b-specdec", // Production optimized fast speculative decoding model
+      messages: [
+        {
+          role: "system",
+          content: "You are a professional assistant writing a response on behalf of B.Jeevitesh. Review the incoming email and draft a short, polite, and helpful response. Sign off the email formally as:\nBest regards,\nB.Jeevitesh"
+        },
+        {
+          role: "user",
+          content: `Email received:\n"${emailText}"`
+        }
+      ],
+      temperature: 0.5,
+      max_tokens: 1024
+    });
 
-  return chatCompletion.choices[0].message.content;
+    if (chatCompletion && chatCompletion.choices && chatCompletion.choices[0].message) {
+      return chatCompletion.choices[0].message.content;
+    }
+    throw new Error("Unexpected empty completion response payload from Groq.");
+  } catch (groqError) {
+    console.error("⚠️ Groq API Generation error:", groqError.message);
+    // Safe standard automated fallback message so execution flow continues smoothly
+    return "Thank you for reaching out. I have received your email and will review the details carefully to get back to you as soon as possible.\n\nBest regards,\nB.Jeevitesh";
+  }
 }
 
 // Core execution loop
 async function runBot() {
-  // Grab self email address identity profile matching
   await getMyProfileEmail();
 
   console.log("🤖 Professional Groq AI Email Bot Active & Monitoring...");
@@ -197,7 +201,7 @@ async function runBot() {
 
         console.log(`Processing email from: ${sender}`);
 
-        // 1. Generate text using Groq
+        // 1. Generate text
         const reply = await generateReply(full.body);
 
         // 2. Dispatch response mail
@@ -210,7 +214,7 @@ async function runBot() {
     } catch (err) {
       console.error("❌ Operational Loop Error:", err.message);
     }
-  }, 60000); // 60-second execution interval
+  }, 60000); 
 }
 
 runBot();
