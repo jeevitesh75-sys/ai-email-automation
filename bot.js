@@ -11,15 +11,20 @@ let gmail;
 let myEmailAddress = "";
 
 try {
-  // Parse JSON data directly from environment variables for production environments
+  // Validate presence of environment variables
   if (!process.env.GMAIL_CREDENTIALS || !process.env.GMAIL_TOKEN) {
     throw new Error("Missing GMAIL_CREDENTIALS or GMAIL_TOKEN environment variables.");
   }
 
-  const parsedCreds = JSON.parse(process.env.GMAIL_CREDENTIALS);
-  const credentials = parsedCreds.web || parsedCreds.installed;
-  const token = JSON.parse(process.env.GMAIL_TOKEN);
+  // Decode the safe Base64 strings back into raw JSON text
+  const decodedCreds = Buffer.from(process.env.GMAIL_CREDENTIALS, "base64").toString("utf-8");
+  const decodedToken = Buffer.from(process.env.GMAIL_TOKEN, "base64").toString("utf-8");
 
+  const parsedCreds = JSON.parse(decodedCreds);
+  const credentials = parsedCreds.web || parsedCreds.installed;
+  const token = JSON.parse(decodedToken);
+
+  // Set up Google OAuth2 Client
   const auth = new google.auth.OAuth2(
     credentials.client_id,
     credentials.client_secret,
@@ -30,11 +35,11 @@ try {
   gmail = google.gmail({ version: "v1", auth });
   
 } catch (err) {
-  console.error("❌ Initialization Error (Check Railway Environment Variables):", err.message);
-  process.exit(1); // Force exit if authentication blocks aren't available
+  console.error("❌ Initialization Error:", err.message);
+  process.exit(1); 
 }
 
-// Safely decode base64 email bodies
+// Safely decode base64 email bodies from incoming mail
 function decodeBase64(data = "") {
   try {
     return Buffer.from(data, "base64").toString("utf-8");
@@ -43,14 +48,14 @@ function decodeBase64(data = "") {
   }
 }
 
-// Extract email from "Name <email@gmail.com>" string
+// Extract clean email address from "Name <email@gmail.com>" headers
 function extractEmail(str) {
   if (!str) return "";
   const match = str.match(/<(.+?)>/);
   return match ? match[1].toLowerCase().trim() : str.toLowerCase().trim();
 }
 
-// Get the authenticated user's profile email address
+// Automatically fetch your profile's email address to catch self-loops
 async function getMyProfileEmail() {
   try {
     const profile = await gmail.users.getProfile({ userId: "me" });
@@ -61,7 +66,7 @@ async function getMyProfileEmail() {
   }
 }
 
-// Fetch only UNREAD emails
+// Fetch up to 5 unread emails
 async function getUnreadEmails() {
   const res = await gmail.users.messages.list({
     userId: "me",
@@ -72,7 +77,7 @@ async function getUnreadEmails() {
   return res.data.messages || [];
 }
 
-// Read and parse email content
+// Read and parse incoming email structures
 async function readEmail(id) {
   const res = await gmail.users.messages.get({
     userId: "me",
@@ -101,7 +106,7 @@ async function readEmail(id) {
   return { id, from, subject, body };
 }
 
-// Send email reply
+// Construct and transmit the raw email string back
 async function sendReply(to, subject, message) {
   const email = [
     `To: ${to}`,
@@ -125,7 +130,7 @@ async function sendReply(to, subject, message) {
   });
 }
 
-// Archive/Mark email as read so it isn't processed again
+// Remove the unread flag so the tracking loop skips it next cycle
 async function markAsRead(id) {
   await gmail.users.messages.batchModify({
     userId: "me",
@@ -136,7 +141,7 @@ async function markAsRead(id) {
   });
 }
 
-// Generate response using Groq Cloud API
+// Query Groq Cloud for the response generation using Llama 3
 async function generateReply(emailText) {
   const chatCompletion = await groq.chat.completions.create({
     messages: [
@@ -159,9 +164,9 @@ B.Jeevitesh`
   return chatCompletion.choices[0].message.content;
 }
 
-// Main execution loop
+// Core execution loop
 async function runBot() {
-  // Dynamic email verification to drop out self-emails
+  // Grab self email address identity profile matching
   await getMyProfileEmail();
 
   console.log("🤖 Professional Groq AI Email Bot Active & Monitoring...");
@@ -183,29 +188,29 @@ async function runBot() {
           continue;
         }
 
-        // Anti-Loop Filter: Skip if you sent this email to yourself
+        // Anti-Spam / Anti-Loop Self Check
         if (sender === myEmailAddress) {
-          console.log(`\u23ed\ufe0f Skipped self-sent email from: ${sender}`);
+          console.log(`⏭️ Skipped self-sent email from: ${sender}`);
           await markAsRead(mail.id);
           continue;
         }
 
         console.log(`Processing email from: ${sender}`);
 
-        // 1. Generate response via Groq
+        // 1. Generate text using Groq
         const reply = await generateReply(full.body);
 
-        // 2. Send the reply
+        // 2. Dispatch response mail
         await sendReply(sender, full.subject, reply);
         console.log(`✅ Replied to: ${sender}`);
 
-        // 3. Mark as read
+        // 3. Flag completed
         await markAsRead(mail.id);
       }
     } catch (err) {
       console.error("❌ Operational Loop Error:", err.message);
     }
-  }, 60000); // 60-second polling interval
+  }, 60000); // 60-second execution interval
 }
 
 runBot();
