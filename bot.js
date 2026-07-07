@@ -10,9 +10,16 @@ const groq = new Groq({
 let gmail;
 let myEmailAddress = "";
 
+// DIAGNOSTIC CHECK: Logs exactly what the environment sees at runtime
+console.log("🔍 === RAILWAY RUNTIME ENVIRONMENT CHECK ===");
+console.log("GMAIL_CREDENTIALS detected?", !!process.env.GMAIL_CREDENTIALS);
+console.log("GMAIL_TOKEN detected?", !!process.env.GMAIL_TOKEN);
+console.log("GROQ_API_KEY detected?", !!process.env.GROQ_API_KEY);
+console.log("============================================");
+
 try {
   if (!process.env.GMAIL_CREDENTIALS || !process.env.GMAIL_TOKEN) {
-    throw new Error("Missing GMAIL_CREDENTIALS or GMAIL_TOKEN environment variables.");
+    throw new Error(`Missing vars. Status -> CREDENTIALS: ${!!process.env.GMAIL_CREDENTIALS}, TOKEN: ${!!process.env.GMAIL_TOKEN}`);
   }
 
   // Safely decode the Base64 strings back into raw JSON text
@@ -139,11 +146,11 @@ async function markAsRead(id) {
   });
 }
 
-// Query Groq safely with built-in try-catch fallback to stop application crashes
+// Query Groq safely with built-in fallback to stop application crashes
 async function generateReply(emailText) {
   try {
     const chatCompletion = await groq.chat.completions.create({
-      model: "llama-3.3-70b-specdec", // Production optimized fast speculative decoding model
+      model: "llama-3.3-70b-specdec", 
       messages: [
         {
           role: "system",
@@ -164,7 +171,6 @@ async function generateReply(emailText) {
     throw new Error("Unexpected empty completion response payload from Groq.");
   } catch (groqError) {
     console.error("⚠️ Groq API Generation error:", groqError.message);
-    // Safe standard automated fallback message so execution flow continues smoothly
     return "Thank you for reaching out. I have received your email and will review the details carefully to get back to you as soon as possible.\n\nBest regards,\nB.Jeevitesh";
   }
 }
@@ -194,7 +200,7 @@ async function runBot() {
 
         // Anti-Spam / Anti-Loop Self Check
         if (sender === myEmailAddress) {
-          console.log(`⏭️ Skipped self-sent email from: ${sender}`);
+          console.log(`\u23ed\ufe0f Skipped self-sent email from: ${sender}`);
           await markAsRead(mail.id);
           continue;
         }
@@ -206,13 +212,13 @@ async function runBot() {
 
         // 2. Dispatch response mail
         await sendReply(sender, full.subject, reply);
-        console.log(`✅ Replied to: ${sender}`);
+        console.log(`\u2705 Replied to: ${sender}`);
 
         // 3. Flag completed
         await markAsRead(mail.id);
       }
     } catch (err) {
-      console.error("❌ Operational Loop Error:", err.message);
+      console.error("\u274c Operational Loop Error:", err.message);
     }
   }, 60000); 
 }
